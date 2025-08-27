@@ -1,0 +1,482 @@
+/*
+ * Feuille de style remaniée pour la partie gameplay du Unique Word Game.
+ *
+ * Cette version privilégie une mise en page modulaire et facilement
+ * personnalisable. Chaque colonne et chaque composant est nommé et
+ * peut être déplacé via l’inspecteur ou en modifiant simplement les
+ * variables CSS ci‑dessous. Le mode sombre est conservé.
+ */
+
+/* Variables globales : couleurs et tailles ajustables. Vous pouvez
+ * modifier ces valeurs pour changer l’interface sans toucher aux
+ * classes. Par exemple, augmentez --central-width pour agrandir
+ * l’aire de saisie, ou changez --players-width pour donner plus
+ * d’espace aux scores.
+ */
+:root {
+  --bg: #0f131c;              /* Fond général */
+  --text: #f0f4ff;           /* Couleur du texte principal */
+  --muted: #8ea2c3;          /* Texte secondaire (scores, logs) */
+  --primary: #4ca2ff;        /* Couleur principale (barres de progression) */
+  --secondary: #d04949;      /* Couleur des mots utilisés */
+  --danger: #f56565;         /* Pour les messages d’erreur ou boutons rouges */
+  --border: #273a5b;         /* Couleur des bordures et séparations */
+  --players-width: 20%;      /* Largeur de la colonne des joueurs */
+  --central-width: 60%;      /* Largeur de la zone centrale (saisie) */
+  --used-words-width: 20%;   /* Largeur de la colonne des mots utilisés */
+  /*
+   * Variables supplémentaires pour ajuster l’interface. Vous pouvez
+   * augmenter ou diminuer ces valeurs pour modifier facilement
+   * l’apparence sans toucher au reste du CSS.
+   */
+  --theme-font-size: 2.2rem;     /* Taille du texte du thème */
+  --input-font-size: 3.6rem;     /* Taille du champ de saisie */
+  --banned-letter-size: 2.8rem;  /* Taille des lettres bannies */
+  --used-word-size: 1.2rem;      /* Taille du texte des mots utilisés */
+  --timer-height: 14px;          /* Hauteur de la barre du timer */
+  --vote-bar-height: 10px;       /* Hauteur de la barre de vote */
+  --log-height: 160px;           /* Hauteur maximale du journal */
+  --vote-area-max-width: 80%;    /* Largeur maximale de la zone de vote */
+}
+
+/* Réinitialisation de base pour éviter les marges et paddings
+ * imprévus. Le box-sizing hérite aux descendants, ce qui simplifie
+ * les calculs de largeur/hauteur.
+ */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+/* Corps : mode sombre et hauteur minimale couvrant tout l’écran. */
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: Arial, sans-serif;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;    /* centre horizontalement */
+}
+
+/* Classe utilitaire pour cacher les éléments. */
+.hidden {
+  display: none !important;
+}
+
+/* =======================
+   Overlays (connexion & score)
+   ======================= */
+
+/* L’overlay couvre tout l’écran et centre son contenu. On garde
+ * l’opacité noire pour assombrir l’arrière‑plan. */
+.overlay {
+  position: fixed;
+  inset: 0; /* top:0; right:0; bottom:0; left:0 */
+  display: flex;              /* active flexbox */
+  align-items: center;        /* centre verticalement */
+  justify-content: center;    /* centre horizontalement */
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 1000;
+}
+
+/* Contenu de la page de connexion (join overlay). Les dimensions
+ * sont limitées pour éviter une boîte trop grande sur grand écran. */
+ 
+.join-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px;
+}
+.join-card input#name {
+  display: block;
+  width: 80%; /* Used 80% to allow centering, adjust if needed */
+  margin-top: 20px; /* Adjust as needed */
+  margin-bottom: 10px; /* Adjust as needed */
+  font-size: 1.3em; /* Adjust as needed */
+  background: none;
+  border: none;
+  text-align: center; /* Centers text inside */
+  color: white; /* Sets the text color to white */
+}
+.join-card input#roomCode {
+  display: block;
+  /* margin-left/right: auto is not strictly needed with align-items: center */
+  /* margin-left: auto; */
+  /* margin-right: auto; */
+  margin-top: 10px; /* Adjust as needed */
+  margin-bottom: 10px; /* Adjust as needed */
+  font-size: 0.9em; /* Adjust as needed */
+  background: none;
+  border: none;
+  text-align: center; /* Centers text inside */
+  /* If you want the room code input centered and not full width, make sure its width is less than 100% */
+  width: auto; /* Or set a specific width like 80% */
+}
+
+
+/* =======================
+   Grille principale du lobby
+   ======================= */
+
+/* Le conteneur du jeu. Les trois colonnes (joueurs, central, mots utilisés)
+ * se positionnent grâce à des pourcentages définis dans les variables.
+ */
+.game-layout {
+  display: flex;
+  width: 90%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px 0;
+  gap: 24px;
+}
+
+/* Colonne des joueurs. On restreint sa largeur via --players-width.
+ * Le contenu défile verticalement si la liste dépasse la hauteur
+ * disponible (max-height calculée dynamiquement en JS si nécessaire).
+ */
+ 
+/* Panneau joueurs (colonne) */
+.players-module{
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+  /* pas de space-between ici */
+  flex-shrink:0;
+}
+
+/* Zone scrollable de la liste (arrête au bas voulu) */
+.players-list{
+  overflow-y:auto;
+  max-height: calc(100vh - 200px); /* ajuste ta valeur */
+  padding-right:6px; /* pour éviter le recouvrement par la scrollbar */
+}
+
+/* La liste elle-même en colonne */
+#players{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  list-style:none;
+  margin:0;
+  padding:0;
+}
+
+/* Chaque ligne : nom à gauche, score à droite */
+#players > *{
+  display:flex;
+  align-items:baseline;
+  justify-content:space-between;
+  gap:12px;
+  padding:2px 0;
+}
+
+/* Nom (1er enfant) : prend la place dispo + ellipsis si trop long */
+#players > * :first-child{
+  flex:1;
+  min-width:0;
+  overflow:hidden;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+}
+
+/* Score (dernier enfant) : largeur fixe, chiffres alignés */
+#players > * :last-child{
+  min-width:5ch;
+  text-align:right;
+  font-variant-numeric:tabular-nums;
+  color:var(--muted);
+}
+
+/* optionnel: petite séparation entre lignes */
+#players > *:not(:last-child){
+  border-bottom:1px dashed rgba(255,255,255,.06);
+}
+
+
+/* Colonne centrale. Elle occupe la plus grande partie de l’écran.
+ * Les éléments y sont centrés par défaut afin de ressembler au
+ * wireframe fourni. */
+.central-module {
+  width: var(--central-width);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+/* Colonne des mots déjà utilisés. Elle est alignée à gauche de
+ * son propre conteneur pour épouser le wireframe. */
+.used-words-module {
+  width: var(--used-words-width);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: calc(100vh - 200px);
+  overflow-y: auto;
+  align-items: flex-start;
+}
+
+/* Chaque module (y compris ceux du score) aura un fond et une
+ * bordure. Cela facilite leur déplacement ultérieur. */
+.module {
+  background: #131d2e;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+/* =======================
+   Thème et round
+   ======================= */
+.theme-section {
+  text-align: center;
+}
+.theme-section h2 {
+  font-size: var(--theme-font-size);
+  font-weight: bold;
+  margin-bottom: 4px;
+}
+.theme-section .round-info {
+  font-size: 0.9rem;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+#startBtn {
+  margin-top: 8px;
+}
+
+/* =======================
+   Barre de timer du tour
+   ======================= */
+.timer-section {
+  width: 100%;
+}
+.timer-bar {
+  width: 100%;
+  height: var(--timer-height);
+  background: #0e1430;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.timer-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--primary), #7aa2ff);
+}
+
+/* =======================
+   Saisie du mot
+   ======================= */
+.input-section {
+  width: 100%;
+  position: relative;
+}
+#word {
+  width: 100%;
+  font-size: var(--input-font-size);
+  font-weight: bold;
+  padding: 12px 16px;
+  text-align: center;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  border-bottom: 2px solid var(--border);
+}
+#word:focus {
+  outline: none;
+  border-bottom-color: var(--primary);
+}
+
+/* Pop‑up d’erreur pour les mots invalides. Placée en
+ * absolu au-dessus de l’input et animée pour attirer l’attention. */
+.error-popup {
+  position: absolute;
+  top: -40px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  background: rgba(245, 101, 101, 0.2);
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  font-size: 0.9rem;
+  animation: shake 0.3s ease-in-out;
+  pointer-events: none;
+}
+@keyframes shake {
+  0% { transform: translateX(-50%) translateX(0); }
+  25% { transform: translateX(-50%) translateX(-5px); }
+  50% { transform: translateX(-50%) translateX(5px); }
+  75% { transform: translateX(-50%) translateX(-5px); }
+  100% { transform: translateX(-50%) translateX(0); }
+}
+
+/* =======================
+   Informations de tour et zone de vote
+   ======================= */
+.turn-info {
+  margin-top: 6px;
+  font-style: italic;
+  color: var(--muted);
+  width: 100%;
+}
+
+/* Barre de vote (progression) */
+.vote-timer {
+  width: 100%;
+}
+.vote-bar {
+  width: 100%;
+  height: var(--vote-bar-height);
+  background: #0e1430;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.vote-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--primary), #7aa2ff);
+}
+
+/* Liste des votes. Chaque entrée est alignée à gauche et séparée par un
+ * petit espace. Le bouton utilise un emoji (style défini côté JS). */
+.vote-area {
+  width: 100%;
+  max-width: var(--vote-area-max-width);
+  margin-left: auto;
+  margin-right: auto;
+  text-align: left;
+}
+.vote-area .vote-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 1rem;
+  gap: 8px;
+}
+.vote-area .vote-row button {
+  padding: 2px 6px;
+  font-size: 1.1rem;
+  background: transparent;
+  border: none;
+  color: var(--danger);
+  cursor: pointer;
+}
+.vote-area .vote-row button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* =======================
+   Lettres bannies et mots utilisés
+   ======================= */
+.banned-section {
+  width: 100%;
+  text-align: center;
+  margin-top: 24px; /* éloigne un peu les lettres bannies du vote */
+}
+.banned-section h3 {
+  font-size: 1.2rem;
+  color: var(--danger);
+  margin-bottom: 4px;
+}
+#punishedLetters {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: var(--banned-letter-size);
+  font-weight: bold;
+  letter-spacing: 2px;
+}
+
+/* Colonne des mots déjà utilisés (à droite). Les mots sont
+ * présentés en rouge, en plus gros que dans la version précédente. */
+.used-words-module h3 {
+  font-size: 1.2rem;
+  margin-bottom: 6px;
+}
+#usedWordsList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: var(--used-word-size);
+  color: var(--secondary);
+}
+#usedWordsList code {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-family: monospace;
+}
+
+/* =======================
+   Journal des logs
+   ======================= */
+.log-section {
+  width: 100%;
+  max-height: var(--log-height);
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+  padding-top: 6px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-style: italic;
+}
+.log-section div {
+  margin-bottom: 4px;
+}
+
+/* =======================
+   Style des boutons généraux
+   ======================= */
+button {
+  padding: 8px 12px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 1rem;
+}
+button.primary {
+  background: var(--primary);
+  color: #fff;
+  border: 1px solid #3668b7;
+}
+button:not(.primary) {
+  background: #1a2240;
+  color: var(--text);
+  border: 1px solid #2a3a6d;
+}
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* =======================
+   Score modal (fin de partie)
+   ======================= */
+.score-modal {
+  background: #131d2e;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  width: 90%;
+  max-width: 500px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.score-modal .module {
+  background: #1a2540;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+

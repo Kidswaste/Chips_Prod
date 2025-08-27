@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chips! By Kiddy</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+  <!--
+    Overlay de connexion qui couvre toute la page.
+    Vous pouvez personnaliser cette zone (id="join") en modifiant la CSS `.overlay`
+    et `.join-card` dans style.css. Ce conteneur est masqué une fois le joueur
+    connecté. Pour ajouter des champs (avatars, couleurs…), ajoutez de nouveaux
+    <input> ou <select> ici.
+  -->
+  <div id="join" class="overlay">
+    <div class="join-card">
+      <h1>Chips!</h1>
+      <p>Entrez votre nom et, si besoin, un code de partie.</p>
+      <input type="text" id="name" placeholder="Votre nom" />
+      <input type="text" id="roomCode" placeholder="Code de la room (facultatif)" />
+      <button id="joinBtn" class="primary">Rejoindre</button>
+    </div>
+  </div>
+
+  <!--
+    Vue du jeu. Ce conteneur (id="lobby") est caché tant que l'utilisateur
+    n'a pas rejoint une room. La nouvelle structure utilise une grille
+    `.game-layout` divisée en trois colonnes :
+      1. La liste des joueurs à gauche (#players).
+      2. La zone centrale avec le thème, le timer, la saisie du mot,
+         la barre/zone de vote, les lettres bannies et les logs.
+      3. La liste des mots déjà utilisés à droite (#usedWordsList).
+
+    Chaque section est encapsulée dans un conteneur portant la classe
+    `.module` pour faciliter son déplacement via le CSS. Vous pouvez
+    réarranger ces modules simplement en changeant l'ordre des balises
+    ou en ajustant les propriétés de grille/flex dans style.css.
+  -->
+  <div id="lobby" class="hidden">
+    <div class="game-layout">
+      <!-- Colonne des joueurs -->
+      <aside class="players-module module">
+        <h3>Joueurs :</h3>
+        <div id="players"></div>
+      </aside>
+      <!-- Colonne centrale : thème, timer, saisie, vote, lettres bannies et logs -->
+      <div class="central-module module">
+        <!-- Section du thème et du round -->
+        <div class="theme-section">
+          <h2>Thème : <span id="theme">-</span></h2>
+          <p class="round-info">Round <span id="round">0</span> - Tour <span id="turn">0</span></p>
+          <button id="startBtn" class="primary hidden">Démarrer</button>
+        </div>
+        <!-- Zone de tour : tout ce qui dépend du round est regroupé ici -->
+        <div id="turnArea" class="turn-area hidden">
+          <!-- Barre de progression du tour (timer principal) -->
+          <div class="timer-section">
+            <div id="timerBar" class="timer-bar">
+              <div id="timerFill" class="timer-fill"></div>
+            </div>
+          </div>
+          <!-- Zone de saisie du mot. Le champ est très grand et centré -->
+          <div class="input-section">
+            <form id="wordForm">
+              <input type="text" id="word" placeholder="VOTRE MOT" autocomplete="off" />
+            </form>
+            <!-- Pop‑up d’erreur pour les mots invalides. Elle est masquée
+                 par défaut et s'affiche au besoin avec une animation -->
+            <div id="errorPopup" class="error-popup hidden"></div>
+          </div>
+          <!-- Informations sur le tour (ex. nombre de joueurs ayant soumis).
+               Cette zone peut être utilisée pour afficher des messages pendant
+               le déroulement du tour. -->
+          <div id="turnInfo" class="turn-info"></div>
+          <!-- Barre de vote. Elle est masquée avant la phase de vote -->
+          <div id="voteTimer" class="vote-timer hidden">
+            <div class="vote-bar">
+              <div class="vote-fill"></div>
+            </div>
+          </div>
+          <!-- Zone de vote : liste des mots et boutons de signalement -->
+          <div id="voteArea" class="vote-area hidden"></div>
+          <!-- Section des lettres bannies. L’ID "punished" est conservé
+               pour le JS. -->
+          <div id="punished" class="banned-section">
+            <h3>Lettres Bannies :</h3>
+            <div id="punishedLetters"></div>
+          </div>
+          <!-- Journal des actions (logs) -->
+          <div class="log-section">
+            <div id="log"></div>
+          </div>
+        </div>
+      </div>
+      <!-- Colonne des mots déjà utilisés -->
+      <aside class="used-words-module module">
+        <h3>Mots déjà utilisés :</h3>
+        <div id="usedWordsList"></div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Overlay de fin de partie avec le tableau des scores.
+       Pour que chaque élément (titre, tableau des scores, boutons) soit
+       repositionnable, nous n'utilisons plus une seule boîte. À la
+       place, nous créons une "score‑modal" contenant trois modules
+       distincts : l'en‑tête, la table des scores et les actions.
+       Chacun porte la classe `.module` afin que vous puissiez
+       manipuler son placement via CSS. -->
+  <div id="endOverlay" class="overlay hidden">
+    <div class="score-modal">
+      <div class="module score-header">
+        <h2>Résultats de la partie</h2>
+      </div>
+      <div class="module score-table">
+        <div id="scoreTable"></div>
+      </div>
+      <div class="module score-actions">
+        <button id="btnMenu">Menu</button>
+        <button id="btnReplay" class="primary">Rejouer</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="client.js"></script>
+</body>
+</html>

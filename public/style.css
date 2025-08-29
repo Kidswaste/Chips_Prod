@@ -306,6 +306,20 @@ body {
   animation: shake 0.3s ease-in-out;
   pointer-events: none;
 }
+
+/* Pop-up d’élimination (joueurs KO) */
+.elim-popup {
+  width: 100%;
+  margin-top: 12px;
+  padding: 12px;
+  background: rgba(208, 73, 73, 0.18);
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  font-size: 0.95rem;
+}
+.elim-row {
+  margin: 4px 0;
+}
 @keyframes shake {
   0% { transform: translateX(-50%) translateX(0); }
   25% { transform: translateX(-50%) translateX(-5px); }
@@ -350,6 +364,24 @@ body {
   margin-left: auto;
   margin-right: auto;
   text-align: left;
+}
+
+/* =======================
+   Pop‑up d’élimination (joueurs KO)
+   ======================= */
+.elim-popup {
+  width: 100%;
+  margin-top: 12px;
+  padding: 12px;
+  background: rgba(208, 73, 73, 0.2); /* teinte rouge translucide */
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  color: var(--danger);
+  font-size: 1rem;
+  text-align: center;
+}
+.elim-popup .elim-row + .elim-row {
+  margin-top: 4px;
 }
 .vote-area .vote-row {
   display: flex;
@@ -420,15 +452,10 @@ body {
    Journal des logs
    ======================= */
 .log-section {
-  width: 100%;
-  max-height: var(--log-height);
-  overflow-y: auto;
-  border-top: 1px solid var(--border);
-  margin-top: 12px;
-  padding-top: 6px;
-  font-size: 0.8rem;
-  color: var(--muted);
-  font-style: italic;
+  /* Les logs ne sont plus affichés dans l'interface. Pour masquer
+   * complètement cette section sans perturber la mise en page,
+   * on utilise display: none. */
+  display: none;
 }
 .log-section div {
   margin-bottom: 4px;

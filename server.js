@@ -71,17 +71,213 @@ const wordBankCache = new Map();
 // Ces paramètres sont faciles à ajuster pour tester différentes mécaniques.
 const TIMER_CONFIG = {
   levelRanges: [
-    { start: 1, end: 10, startSec: 15, endSec: 10 },
-    { start: 10, end: 15, startSec: 10, endSec: 8 },
-    { start: 15, end: 20, startSec: 8, endSec: 4 },
+    { start: 1, end: 10, startSec: 10, endSec: 8 },
+    { start: 10, end: 15, startSec: 8, endSec: 6 },
+    { start: 15, end: 20, startSec: 6, endSec: 4 },
   ],
   voteDurationMs: 2000,
+};
+
+// -----------------------------------------------------------------------------
+// Configuration des messages et délais
+//
+// Ces constantes contrôlent les messages affichés lors d’événements
+// particuliers (aucune soumission, doublons, hors-sujet et fin de partie) et
+// les délais d’affichage des popups associés. Modifiez ces valeurs pour
+// personnaliser l’expérience utilisateur sans parcourir tout le code.
+// - MESSAGES.noSubmission : affiché lorsqu’aucun joueur n’a soumis de mot.
+// - MESSAGES.duplicate(names) : construit un message « X et Y ont fait
+//   chips! » pour les joueurs ayant soumis le même mot. Le paramètre
+//   `names` est un tableau de prénoms (normalisés).
+// - MESSAGES.offTopic(name) : affiché lorsqu’un joueur est éliminé pour
+//   avoir utilisé un mot hors-sujet après vote.
+// - MESSAGES.gameOver : affiché quand la partie se termine parce que
+//   suffisamment de tours ont été joués ou qu’il ne reste qu’un joueur.
+// - DELAY_CONFIG.eliminationPopupMs : durée (en ms) pendant laquelle le
+//   popup d’élimination reste visible avant de continuer. Augmentez ou
+//   réduisez selon vos préférences.
+// - DELAY_CONFIG.gameOverMs : délai (en ms) avant d’afficher le tableau
+//   final des scores après le message « Game Over! ».
+/*
+ * Messages personnalisables pour les notifications de jeu. Vous pouvez
+ * modifier ces chaînes pour ajuster le feedback affiché aux joueurs.
+ * - noSubmission : message lorsqu’aucun joueur n’a soumis de mot durant
+ *   un tour (tous les joueurs sont éliminés).
+ * - duplicate(names) : message généré lorsqu’un ou plusieurs joueurs ont
+ *   soumis le même mot. Le paramètre `names` est un tableau contenant les
+ *   prénoms des joueurs concernés ; la fonction compose une phrase en
+ *   listant les noms séparés par des virgules et le dernier avec « et ».
+ * - offTopic(name) : message lorsqu’un joueur est éliminé pour avoir
+ *   proposé un mot hors‑sujet (vote majoritaire contre lui).
+ * - gameOver : message affiché dans les logs lorsque la partie se termine.
+ */
+const MESSAGES = {
+  noSubmission: '"Personne" n\'a pas eu le temps',
+  duplicate: (names) => {
+    if (!names || names.length === 0) return '';
+    if (names.length === 1) return `"${names[0]}" a fait chips!`;
+    if (names.length === 2) return `"${names[0]}" et "${names[1]}" ont fait chips!`;
+    const allButLast = names.slice(0, -1).map((n) => `"${n}"`).join(', ');
+    const last = `"${names[names.length - 1]}"`;
+    return `${allButLast} et ${last} ont fait chips!`;
+  },
+  offTopic: (name) => `"${name}" a utilisé un mot hors‑sujet`,
+  gameOver: 'Game Over!',
+};
+const DELAY_CONFIG = {
+  eliminationPopupMs: 2000, // temps du popup d’élimination (en ms)
+  gameOverMs: 3500,         // délai avant le tableau de score final (en ms)
 };
 
 // Configuration générale des rooms : vieillissement et inactivité
 const CONFIG = {
   ROOM_MAX_AGE_MS: 6 * 60 * 60 * 1000, // durée de vie maximale d’une room (6 heures)
   ROOM_IDLE_MS:    20 * 60 * 1000,     // durée d’inactivité avant fermeture (20 minutes)
+};
+
+// -----------------------------------------------------------------------------
+// Fonctions utilitaires pour gérer un bot d’auto‑test
+//
+// Un bot est ajouté à une room lorsqu’une partie est démarrée avec
+// moins de deux joueurs humains en ligne. Le bot agit comme un joueur
+// normal : il apparaît dans la liste avec un nom prédéfini, peut être
+// éliminé et marque des points. À chaque tour, il sélectionne un mot
+// valide et le soumet automatiquement au milieu du temps imparti. Ces
+// fonctions encapsulent la création, la sélection de mots et la
+// planification de la soumission du bot.
+//
+// Vous pouvez ajuster le comportement du bot via BOT_CONFIG.delayFactor
+// (fraction du timer avant soumission) ou en surchargeant pickBotWord
+// pour implémenter des stratégies plus élaborées (aléatoire, difficulté,
+// priorisation des mots rares, etc.).
+
+/**
+ * Ajoute un bot à la room si aucun n’est présent. Le bot est identifié
+ * par un identifiant unique (prefixe "bot-" avec un timestamp). Il est
+ * ajouté à la Map players avec un nom « Bot », un score initial nul et
+ * un statut online. Son champ alive est mis à false ; il sera réanimé
+ * au début du round via startNewRound().
+ *
+ * @param {Object} room La room où ajouter le bot
+ */
+function addBot(room) {
+  if (room.botId) return;
+  const botId = `bot-${Date.now()}`;
+  room.players.set(botId, {
+    name: "Bot",
+    score: 0,
+    alive: false,
+    online: true,
+  });
+  room.botId = botId;
+}
+
+/**
+ * Supprime le bot de la room s’il existe. Utilisé lorsque suffisamment
+ * de joueurs humains sont présents pour jouer sans l’aide du bot.
+ *
+ * @param {Object} room La room où retirer le bot
+ */
+function removeBot(room) {
+  if (room.botId) {
+    room.players.delete(room.botId);
+    room.botId = null;
+  }
+}
+
+/**
+ * Sélectionne un mot pour le bot. Parcourt la banque de mots de la room
+ * (room.wordSet) et renvoie le premier mot qui n’a pas encore été utilisé
+ * (room.usedWords), qui n’a pas été soumis dans le tour courant et qui
+ * ne contient pas de lettre punie. Les mots sont normalisés (sans
+ * accent). Si aucun mot valide n’est trouvé, renvoie null.
+ *
+ * @param {Object} room La room contenant wordSet, usedWords, punishedLetters
+ * @returns {string|null} Un mot valide pour le bot ou null
+ */
+function pickBotWord(room) {
+  for (const word of room.wordSet) {
+    if (room.usedWords.has(word)) continue;
+    if (room.submissions.has(room.botId)) continue;
+    let skip = false;
+    // Vérifier les lettres punies
+    if (Array.isArray(room.punishedLetters) && room.punishedLetters.length > 0) {
+      for (const l of room.punishedLetters) {
+        if (word.includes(l)) {
+          skip = true;
+          break;
+        }
+      }
+      if (skip) continue;
+    }
+    // Vérifier que personne n’a soumis le même mot dans ce tour
+    let duplicateFound = false;
+    for (const [, w] of room.submissions) {
+      if (w === word) {
+        duplicateFound = true;
+        break;
+      }
+    }
+    if (duplicateFound) continue;
+    return word;
+  }
+  return null;
+}
+
+/**
+ * Planifie la soumission automatique du bot pour le tour en cours. On
+ * utilise room.currentTurnDuration et BOT_CONFIG.delayFactor pour
+ * déterminer à quel moment envoyer le mot. Si le bot est mort ou absent
+ * (room.botId null) ou si room.accepting est false, aucune soumission
+ * n’est planifiée. Un seul timer de soumission est actif par room
+ * (stocké dans room.timers.botSubmit) et annulé au début de chaque tour.
+ *
+ * @param {string} code Le code de la room (pour l’émission Socket.IO)
+ * @param {Object} room L’état de la room
+ */
+function scheduleBotSubmission(code, room) {
+  // Annuler toute soumission déjà planifiée
+  if (room.timers.botSubmit) {
+    clearTimeout(room.timers.botSubmit);
+    room.timers.botSubmit = null;
+  }
+  // Pas de bot ? rien à faire
+  if (!room.botId) return;
+  const botPlayer = room.players.get(room.botId);
+  if (!botPlayer || !botPlayer.alive) return;
+  // Tour non actif ? ne pas planifier
+  if (!room.accepting || !room.currentTurnDuration) return;
+  // Calculer le délai
+  const delay = Math.max(0, Math.min(room.currentTurnDuration - 50, Math.floor(room.currentTurnDuration * BOT_CONFIG.delayFactor)));
+  room.timers.botSubmit = setTimeout(() => {
+    // Vérifier que le tour est toujours actif
+    if (!room.accepting) return;
+    const word = pickBotWord(room);
+    if (!word) return;
+    // Enregistrer la soumission et le timestamp
+    if (!room.submissions.has(room.botId)) {
+      room.submissions.set(room.botId, word);
+      if (!room.submissionTimes) room.submissionTimes = new Map();
+      room.submissionTimes.set(room.botId, Date.now());
+      // Diffuser au bot un ack (facultatif) et mise à jour progression
+      io.to(code).emit('turn:progress', { submitted: room.submissions.size });
+    }
+  }, delay);
+}
+
+// -----------------------------------------------------------------------------
+// Configuration du bot d’auto‑test
+//
+// Pour permettre de tester le jeu en solo, on peut injecter un bot dans la
+// room lorsque l’host démarre une partie avec moins de deux joueurs humains.
+// Ce bot choisit automatiquement un mot valide et le soumet au milieu du
+// temps imparti pour le tour. Vous pouvez ajuster le comportement du bot
+// ici :
+// - delayFactor : fraction du temps du tour à attendre avant l’envoi du mot
+//   (0.5 signifie que le bot soumettra après la moitié du timer). Réglez
+//   cette valeur entre 0 et 1 selon la difficulté souhaitée.
+const BOT_CONFIG = {
+  delayFactor: 0.5,
 };
 
 // Registre de toutes les rooms. Chaque entrée est un objet RoomState.
@@ -296,7 +492,7 @@ function createRoom() {
     lastActivity: Date.now(),// date de dernière action (pour le timeout)
     // Timers utilisés pour les callbacks asynchrones. Un timer supplémentaire
     // voteEnd sera utilisé pendant la phase de vote pour annuler si besoin.
-    timers: { nextTurn: null, endTurn: null, newRound: null, voteEnd: null },
+    timers: { nextTurn: null, endTurn: null, newRound: null, voteEnd: null, botSubmit: null },
     // Structure de votes (initialisée lorsqu’un tour se termine)
     votes: new Map(),
     votingActive: false,
@@ -311,10 +507,6 @@ function createRoom() {
 	  "Prénoms",
 	  "Marques",
 	  "Anime",
-	  //"Films",
-	  //"Séries",
-	  //"Top 500 Spotify" https://github.com/EduardLupu/ ,
-	  //"
     ],
     // Indique si une partie est en cours. Empêche de démarrer une seconde
     // partie alors que la précédente n'est pas terminée. Lors du démarrage
@@ -332,6 +524,13 @@ function createRoom() {
     // l’utilisation de mots les contenant. Ce tableau est renouvelé à
     // chaque tour et envoyé au client via turn:start.
     punishedLetters: [],
+    // Identifiant du bot (s’il existe). Lorsque l’host démarre une partie
+    // avec moins de deux joueurs humains, un bot est automatiquement
+    // ajouté à la room afin de permettre de tester le jeu en solo. Ce
+    // champ stocke l’identifiant du bot dans la Map `players`. S’il est
+    // null, aucun bot n’est présent. Le bot est traité comme un
+    // joueur normal (score, online, alive) et peut être éliminé.
+    botId: null,
     /**
      * Horodatage du début du tour courant (en ms). Il est défini dans
      * startNextTurn() afin de calculer le temps écoulé pour chaque
@@ -353,6 +552,12 @@ function createRoom() {
      * tour dans startNextTurn().
      */
     submissionTimes: new Map(),
+    /**
+     * Timers supplémentaires liés au bot. Un champ `botSubmit` sera créé
+     * dans l’objet timers pour gérer l’envoi automatique des mots du bot
+     * pendant un tour. Voir addBot() et scheduleBotSubmission().
+     */
+    
   };
 }
 
@@ -548,6 +753,9 @@ function startNextTurn(code, room) {
   });
   // Planifier la fin du tour
   room.timers.endTurn = setTimeout(() => endTurn(code, room), turnMs);
+  // Planifier la soumission du bot si nécessaire. Le bot enverra un mot
+  // automatiquement après une fraction du timer (voir BOT_CONFIG.delayFactor).
+  scheduleBotSubmission(code, room);
   touchRoom(room);
 }
 
@@ -561,83 +769,113 @@ function startNextTurn(code, room) {
  * @param {Object} room L’état de la room
  */
 function endTurn(code, room) {
+  // On arrête de recevoir des soumissions
   room.accepting = false;
-  // Fréquence des mots soumis
+  // Construire la fréquence des mots soumis
   const freq = new Map();
   for (const [sid, word] of room.submissions) {
     if (!freq.has(word)) freq.set(word, []);
     freq.get(word).push(sid);
   }
+  // Déterminer les joueurs éliminés et les raisons (pas de soumission, doublon)
   const eliminated = new Set();
-  // Éliminer les joueurs qui n’ont rien soumis
+  const noSubmissionIds = [];
+  const duplicateIds = [];
+  // Joueurs vivants sans soumission
   room.players.forEach((p, sid) => {
-    if (p.alive && !room.submissions.has(sid)) eliminated.add(sid);
+    if (p.alive && !room.submissions.has(sid)) {
+      eliminated.add(sid);
+      noSubmissionIds.push(sid);
+    }
   });
-  // Éliminer les doublons de ce tour
+  // Joueurs ayant soumis un mot doublon
   for (const [w, ids] of freq) {
-    if (ids.length >= 2) ids.forEach((sid) => eliminated.add(sid));
-  }
-  // Appliquer l’élimination
-  eliminated.forEach((sid) => {
-    const p = room.players.get(sid);
-    if (p) p.alive = false;
-  });
-  // Attribuer des points aux réponses valides en fonction de la rapidité
-  // de soumission. Les joueurs éliminés au tour (doublons ou pas de mot)
-  // ne reçoivent pas de points. Le score est calculé entre 10 et 1
-  // en fonction du pourcentage de temps écoulé: 10 pour une réponse
-  // immédiate, 1 pour une réponse en fin de timer. On recourt à la
-  // fonction Math.floor() pour définir des paliers.
-  if (room.turnStartedAt && room.currentTurnDuration) {
-    for (const [sid] of room.submissions) {
-      if (eliminated.has(sid)) continue;
-      const submitTs = room.submissionTimes.get(sid);
-      if (!submitTs) continue;
-      const elapsed = submitTs - room.turnStartedAt;
-      const dur = room.currentTurnDuration;
-      let score = 10 - Math.floor((elapsed / dur) * 10);
-      if (score < 1) score = 1;
-      if (score > 10) score = 10;
-      const player = room.players.get(sid);
-      if (player) {
-        player.score += score;
-      }
+    if (ids.length >= 2) {
+      ids.forEach((sid) => {
+        eliminated.add(sid);
+        duplicateIds.push(sid);
+      });
     }
   }
-  // Après l’attribution des points, mettre à jour les clients sur le lobby
-  io.to(code).emit("lobby:update", serializeRoom(room));
-  // Mémoriser les mots uniques et valides du tour pour éviter la réutilisation
-  for (const [sid, word] of room.submissions) {
-    if (!eliminated.has(sid)) room.usedWords.add(word);
+  // Préparer les messages à envoyer aux clients
+  // Si aucun mot soumis, on envoie le message correspondant
+  const messages = [];
+  if (room.submissions.size === 0) {
+    messages.push(MESSAGES.noSubmission);
   }
-  // Informer les clients de la fin du tour
-  io.to(code).emit("turn:end", {
-    submissions: [...room.submissions.entries()].map(([sid, word]) => ({
-      id: sid,
-      name: room.players.get(sid)?.name || "?",
-      word,
-    })),
-    eliminated: [...eliminated],
-    usedWords: [...room.usedWords],
-    // Exposer la durée de vote au client pour qu’il puisse animer la barre de vote
-    voteDurationMs: TIMER_CONFIG.voteDurationMs,
+  // S’il y a des doublons, on collecte les noms pour le message
+  if (duplicateIds.length > 0) {
+    const names = duplicateIds.map((sid) => room.players.get(sid)?.name || '?');
+    // retirer les doublés d’éventuelles répétitions
+    const uniqueNames = Array.from(new Set(names));
+    messages.push(MESSAGES.duplicate(uniqueNames));
+  }
+  // Envoyer les messages aux clients via log:message
+  messages.forEach((msg) => {
+    if (msg) io.to(code).emit('log:message', { message: msg });
   });
-  // Démarrer une phase de vote interactif : chaque joueur peut voter
-  // contre un mot s’il le juge hors‑sujet. Une room.votes est créée pour
-  // stocker les votes. Une fois la période écoulée, les éliminations
-  // définitives sont traitées dans finalizeVote().
-  room.votes = new Map();
-  room.votingActive = true;
-  // Initialiser les entrées de votes pour chaque soumission
-  for (const [sid] of room.submissions) {
-    room.votes.set(sid, new Set());
+  // Préparer la liste des éliminations pour le popup
+  const elimList = [];
+  eliminated.forEach((sid) => {
+    const p = room.players.get(sid);
+    const name = p?.name || '?';
+    let reason = 'duplicate';
+    if (noSubmissionIds.includes(sid)) reason = 'noSubmission';
+    elimList.push({ id: sid, name, reason });
+    // appliquer l’élimination immédiatement dans l’état
+    if (p) p.alive = false;
+  });
+  // Fonction qui termine le tour : attribution des points, envoi de turn:end et lancement du vote
+  const finalizeTurn = () => {
+    // Attribuer des points aux joueurs non éliminés en fonction de la rapidité
+    if (room.turnStartedAt && room.currentTurnDuration) {
+      for (const [sid] of room.submissions) {
+        if (eliminated.has(sid)) continue;
+        const submitTs = room.submissionTimes.get(sid);
+        if (!submitTs) continue;
+        const elapsed = submitTs - room.turnStartedAt;
+        const dur = room.currentTurnDuration;
+        let score = 10 - Math.floor((elapsed / dur) * 10);
+        if (score < 1) score = 1;
+        if (score > 10) score = 10;
+        const player = room.players.get(sid);
+        if (player) player.score += score;
+      }
+    }
+    // Mise à jour du lobby
+    io.to(code).emit('lobby:update', serializeRoom(room));
+    // Mémoriser les mots valides pour empêcher la réutilisation
+    for (const [sid, word] of room.submissions) {
+      if (!eliminated.has(sid)) room.usedWords.add(word);
+    }
+    // Envoyer l’événement de fin de tour aux clients
+    io.to(code).emit('turn:end', {
+      submissions: [...room.submissions.entries()].map(([sid, word]) => ({
+        id: sid,
+        name: room.players.get(sid)?.name || '?',
+        word,
+      })),
+      eliminated: [...eliminated],
+      usedWords: [...room.usedWords],
+      voteDurationMs: TIMER_CONFIG.voteDurationMs,
+    });
+    // Préparer la phase de vote
+    room.votes = new Map();
+    room.votingActive = true;
+    for (const [sid] of room.submissions) {
+      room.votes.set(sid, new Set());
+    }
+    const voteMs = TIMER_CONFIG.voteDurationMs;
+    room.timers.voteEnd = setTimeout(() => finalizeVote(code, room), voteMs);
+    touchRoom(room);
+  };
+  // Si des joueurs sont éliminés, envoyer un popup et attendre un délai avant de poursuivre
+  if (elimList.length > 0) {
+    io.to(code).emit('elim:popup', { eliminations: elimList });
+    setTimeout(finalizeTurn, DELAY_CONFIG.eliminationPopupMs);
+  } else {
+    finalizeTurn();
   }
-  // Planifier la fin de la phase de vote. On attend quelques secondes
-  // afin que chaque joueur ait le temps de voter. La durée est
-  // configurable via TIMER_CONFIG.voteDurationMs.
-  const voteMs = TIMER_CONFIG.voteDurationMs;
-  room.timers.voteEnd = setTimeout(() => finalizeVote(code, room), voteMs);
-  touchRoom(room);
 }
 
 /**
@@ -708,71 +946,89 @@ function endRound(code, room, winnerId) {
  * @param {Object} room L’état de la room
  */
 function finalizeVote(code, room) {
-  if (!room.votingActive) return; // sécurité
+  // Si la phase de vote est terminée ou inexistante, ne rien faire
+  if (!room.votingActive) return;
   room.votingActive = false;
-  // Stop the voting timer if it is running
+  // Arrêter le timer de vote
   if (room.timers.voteEnd) {
     clearTimeout(room.timers.voteEnd);
     room.timers.voteEnd = null;
   }
-  // Calcule le nombre de joueurs encore en vie avant le vote
-  const alive = aliveIds(room);
-  const aliveCount = alive.length;
-  // Seuil de majorité stricte : plus de la moitié
-  const threshold = Math.floor(aliveCount / 2) + 1;
-  const eliminated = new Set();
-  // Pour chaque soumission, vérifier si les votes dépassent le seuil
+  // Liste des survivants avant vote
+  const aliveBefore = aliveIds(room);
+  // Déterminer les joueurs éliminés par vote (majorité absolue)
+  const eliminatedByVote = new Set();
   for (const [targetId, voters] of room.votes) {
-    // Si le joueur ciblé n’est plus en vie, ignorer
+    // Ignorer si déjà mort
     if (!room.players.get(targetId)?.alive) continue;
-    // Le joueur voté ne compte pas parmi les votants — la majorité
-    // est calculée uniquement sur la base des autres survivants
-    const effectiveVoters = alive.filter((sid) => sid !== targetId);
-    const effCount = effectiveVoters.length;
-    const effThreshold = Math.floor(effCount / 2) + 1;
+    // Calculer la majorité en excluant le joueur ciblé
+    const effective = aliveBefore.filter((sid) => sid !== targetId);
+    const effThreshold = Math.floor(effective.length / 2) + 1;
     if (voters.size >= effThreshold) {
-      eliminated.add(targetId);
+      eliminatedByVote.add(targetId);
     }
   }
-  // Appliquer l’élimination et retirer leurs mots de usedWords
-  for (const sid of eliminated) {
+  // Préparer les événements de popup off‑topic
+  const popupEvents = [];
+  eliminatedByVote.forEach((sid) => {
     const p = room.players.get(sid);
-    if (p) p.alive = false;
-    // Retirer le mot de usedWords pour le rendre réutilisable
-    const word = room.submissions.get(sid);
-    if (word) {
-      room.usedWords.delete(word);
+    if (p) {
+      const msg = MESSAGES.offTopic(p.name);
+      popupEvents.push({
+        players: [ { id: sid, name: p.name } ],
+        message: msg,
+      });
     }
-  }
-  // Informer les clients des éliminations par vote
-  if (eliminated.size > 0) {
-    io.to(code).emit('vote:eliminated', { ids: [...eliminated] });
-  }
-  // Nettoyer les votes
-  room.votes = new Map();
-  // Si le niveau atteint ou dépasse 20, terminer définitivement la partie
-  if (room.level >= 20) {
-    // Déterminer le joueur avec le score le plus élevé (en cas de égalité, le premier rencontré est pris)
-    let maxScore = -Infinity;
-    let bestId = null;
-    room.players.forEach((p, id) => {
-      if (p.score > maxScore) {
-        maxScore = p.score;
-        bestId = id;
-      }
-    });
-    // Finir le round et donc la partie; endRound mettra gameActive à false et affichera les scores
-    endRound(code, room, bestId);
-    return;
-  }
-  // Reprendre le déroulement normal du jeu
-  const remaining = aliveIds(room);
-  if (remaining.length <= 1) {
-    endRound(code, room, remaining[0] || null);
-  } else {
-    // Niveau >=10 : on enchaîne directement sans délai entre les tours
+  });
+  // Fonction interne pour appliquer les éliminations et continuer
+  const proceedAfterPopup = () => {
+    // Appliquer l’élimination et nettoyer usedWords
+    for (const sid of eliminatedByVote) {
+      const p = room.players.get(sid);
+      if (p) p.alive = false;
+      const word = room.submissions.get(sid);
+      if (word) room.usedWords.delete(word);
+    }
+    // Nettoyer les votes
+    room.votes = new Map();
+    // Vérifier les conditions de fin de partie (niveau >= 20 ou un seul joueur en vie)
+    const remaining = aliveIds(room);
+    const levelExceeded = room.level >= 20;
+    if (levelExceeded || remaining.length <= 1) {
+      // Message de fin de partie
+      io.to(code).emit('log:message', { message: MESSAGES.gameOver });
+      // Après un délai, afficher le tableau de scores final
+      room.timers.newRound = setTimeout(() => {
+        // Déterminer le gagnant (plus haut score) ou null
+        let bestId = null;
+        let maxScore = -Infinity;
+        room.players.forEach((p, id) => {
+          if (p.score > maxScore) {
+            maxScore = p.score;
+            bestId = id;
+          }
+        });
+        endRound(code, room, bestId);
+      }, DELAY_CONFIG.gameOverMs);
+      return;
+    }
+    // Sinon, enchaîner sur le tour suivant (aucun délai supplémentaire)
     const delay = room.level >= 10 ? 0 : 900;
     room.timers.nextTurn = setTimeout(() => startNextTurn(code, room), delay);
+  };
+  if (popupEvents.length > 0) {
+    // Envoi d'un événement spécifique pour signaler l’élimination par vote
+    io.to(code).emit('vote:eliminated', { ids: [...eliminatedByVote] });
+    // Envoi de log et popup pour chaque joueur hors‑sujet
+    for (const ev of popupEvents) {
+      io.to(code).emit('log:message', { message: ev.message });
+    }
+    io.to(code).emit('elim:popup', { events: popupEvents });
+    // Attente du délai d’affichage avant de poursuivre
+    room.timers.newRound = setTimeout(proceedAfterPopup, DELAY_CONFIG.eliminationPopupMs);
+  } else {
+    // Aucune élimination par vote : continuer normalement
+    proceedAfterPopup();
   }
 }
 
@@ -876,6 +1132,15 @@ io.on("connection", (socket) => {
     });
     // Attribuer l’host s’il n’existe pas encore
     if (!room.hostId) room.hostId = socket.id;
+    // Si un bot est présent et qu’il y a maintenant au moins deux joueurs
+    // humains connectés, on peut retirer le bot car il n’est plus nécessaire.
+    let humanOnline = 0;
+    room.players.forEach((p, id) => {
+      if (id !== room.botId && p.online) humanOnline++;
+    });
+    if (room.botId && humanOnline >= 2) {
+      removeBot(room);
+    }
     // Diffuser l’état
     io.to(roomCode).emit("lobby:update", serializeRoom(room));
     if (typeof ack === "function") {
@@ -895,9 +1160,27 @@ io.on("connection", (socket) => {
     if (!room) return;
     if (socket.id !== room.hostId) return;
     // Empêcher de lancer une partie si une autre est en cours ou si
-    // moins de deux joueurs sont connectés. On renvoie toujours le même
-    // message d’erreur pour éviter de donner trop de détails.
-    if (room.gameActive || onlineCount(room) < 2) {
+    // moins de deux joueurs humains sont en ligne. On compte les joueurs
+    // humains (id différent du bot) qui sont connectés. Si le total est
+    // inférieur à 2, on insère un bot pour permettre de jouer en solo.
+    if (room.gameActive) {
+      io.to(socket.id).emit("game:error", {
+        message: "Problème de création du Lobby, Demande à Kiddy",
+      });
+      return;
+    }
+    // Compter les humains en ligne (on ignore le bot si déjà présent)
+    let humanCount = 0;
+    room.players.forEach((p, id) => {
+      if (id !== room.botId && p.online) humanCount++;
+    });
+    // Si moins de deux humains, ajouter un bot
+    if (humanCount < 2) {
+      addBot(room);
+    }
+    // Après ajout du bot, vérifier qu’au moins deux joueurs (humain ou bot)
+    // sont présents. Sinon, renvoyer une erreur.
+    if (onlineCount(room) < 2) {
       io.to(socket.id).emit("game:error", {
         message: "Problème de création du Lobby, Demande à Kiddy",
       });
@@ -932,9 +1215,23 @@ io.on("connection", (socket) => {
     const room = rooms.get(code);
     if (!room) return;
     if (socket.id !== room.hostId) return;
-    // Empêcher le relancement si une partie est en cours ou s’il n’y a pas
-    // assez de joueurs. Même message d’erreur que pour game:start.
-    if (room.gameActive || onlineCount(room) < 2) {
+    // Empêcher le relancement si une partie est en cours. Si trop peu
+    // d’humains en ligne, on insère un bot comme pour game:start.
+    if (room.gameActive) {
+      io.to(socket.id).emit("game:error", {
+        message: "Problème de création du Lobby, Demande à Kiddy",
+      });
+      return;
+    }
+    // Compter les joueurs humains en ligne
+    let humanCount = 0;
+    room.players.forEach((p, id) => {
+      if (id !== room.botId && p.online) humanCount++;
+    });
+    if (humanCount < 2) {
+      addBot(room);
+    }
+    if (onlineCount(room) < 2) {
       io.to(socket.id).emit("game:error", {
         message: "Problème de création du Lobby, Demande à Kiddy",
       });
@@ -1050,6 +1347,18 @@ io.on("connection", (socket) => {
     if (wasHost) {
       // Choisir un nouvel host parmi les joueurs en ligne
       room.hostId = [...room.players.keys()].find((id) => room.players.get(id)?.online) || null;
+    }
+    // Si la partie est en cours et qu'il ne reste qu'un seul joueur humain
+    // en ligne, ajouter un bot pour permettre de continuer en solo. On
+    // compte les joueurs online en excluant le bot si présent.
+    if (room.gameActive) {
+      let humanOnline = 0;
+      room.players.forEach((pl, id) => {
+        if (id !== room.botId && pl.online) humanOnline++;
+      });
+      if (humanOnline < 2) {
+        addBot(room);
+      }
     }
     // Si plus aucun joueur online, fermer la room
     if (onlineCount(room) === 0) {

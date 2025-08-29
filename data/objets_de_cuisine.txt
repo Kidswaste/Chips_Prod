@@ -1,0 +1,8 @@
+casserole
+couteau
+fourchette
+cuillere
+verre
+assiette
+poele
+passoire

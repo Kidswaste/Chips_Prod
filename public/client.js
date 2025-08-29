@@ -45,6 +45,16 @@
   // Références pour l’affichage des lettres punies (punies) à partir du niveau 10
   const punishedEl = document.getElementById('punished');
   const punishedLettersEl = document.getElementById('punishedLetters');
+  // Titre des lettres punies/obligatoires (élément <h3> dans #punished)
+  const punishedTitleEl = document.querySelector('#punished h3');
+
+  // Zone d’élimination (KO) pour afficher les joueurs éliminés et leur raison
+  const elimPopup = document.getElementById('elimPopup');
+
+  // Indicateur qu'un pop‑up d'élimination est en cours d'affichage.
+  // Utilisé pour retarder l'affichage du tableau des scores afin de
+  // laisser le temps aux joueurs de lire les raisons d'élimination.
+  let elimPopupActive = false;
 
   // Zone de vote pour signaler les mots hors‑sujet
   const voteAreaEl = document.getElementById('voteArea');
@@ -153,13 +163,18 @@
     // Masquer les lettres punies au début d'un nouveau round
     punishedEl.classList.add('hidden');
     punishedLettersEl.textContent = '';
+    // Masquer et réinitialiser la zone d’élimination
+    if (elimPopup) {
+      elimPopup.classList.add('hidden');
+      elimPopup.innerHTML = '';
+    }
     // Arrêter la barre de vote lorsque le round commence
     stopVoteTimer();
   });
 
-  // Turn start : reset, afficher le timer et les lettres punies. Le serveur
-  // transmet également punishedLetters lorsque le niveau est >= 10.
-  socket.on('turn:start', ({ turn, turnMs, punishedLetters }) => {
+  // Turn start : reset, afficher le timer et les lettres punies/obligatoires. Le serveur
+  // transmet également punishedLetters et letterRuleType lorsque le niveau le permet.
+  socket.on('turn:start', ({ turn, turnMs, punishedLetters, letterRuleType }) => {
     turnEl.textContent = turn;
     lockedWord = null;
     turnInfoEl.textContent = '';
@@ -178,15 +193,25 @@
     // Masquer la zone de vote en début de tour
     voteAreaEl.classList.add('hidden');
     voteAreaEl.innerHTML = '';
-    // Mettre à jour l’affichage des lettres punies. Si punishedLetters
-    // contient des éléments, on les affiche en majuscule. Sinon, on
-    // masque la zone.
+    // Mettre à jour l’affichage des lettres punies ou obligatoires. On adapte
+    // le titre et la couleur selon letterRuleType. Si aucune lettre, on masque.
     if (punishedLetters && punishedLetters.length) {
       punishedEl.classList.remove('hidden');
+      const type = letterRuleType === 'require' ? 'require' : 'forbid';
+      if (punishedTitleEl) {
+        punishedTitleEl.textContent = (type === 'require') ? 'Lettres Obligatoires :' : 'Lettres Bannies :';
+        punishedTitleEl.style.color = (type === 'require') ? '#1db954' : '';
+      }
+      punishedLettersEl.style.color = (type === 'require') ? '#1db954' : '';
       punishedLettersEl.textContent = punishedLetters.map((c) => c.toUpperCase()).join(' ');
     } else {
       punishedEl.classList.add('hidden');
       punishedLettersEl.textContent = '';
+    }
+    // Cacher et réinitialiser le pop‑up d’élimination au début du tour
+    if (elimPopup) {
+      elimPopup.classList.add('hidden');
+      elimPopup.innerHTML = '';
     }
     // Stop vote timer at the beginning of a turn (phase de vote terminée)
     stopVoteTimer();
@@ -233,6 +258,11 @@
       voteAreaEl.classList.add('hidden');
       voteAreaEl.innerHTML = '';
     }
+    // Masquer la zone d’élimination une fois que la phase de vote commence
+    if (elimPopup) {
+      elimPopup.classList.add('hidden');
+      elimPopup.innerHTML = '';
+    }
   });
   // Round end: announce winner if any
   socket.on('round:end', ({ winner, round }) => {
@@ -247,31 +277,53 @@
     // Masquer les lettres punies en fin de round
     punishedEl.classList.add('hidden');
     punishedLettersEl.textContent = '';
+    // Masquer la zone d’élimination en fin de round
+    if (elimPopup) {
+      elimPopup.classList.add('hidden');
+      elimPopup.innerHTML = '';
+    }
     // Arrêter la barre de vote en fin de round
     stopVoteTimer();
   });
-  // Game end: display scoreboard overlay
-  socket.on('game:end', ({ winner, round, scores }) => {
-    endOverlay.classList.remove('hidden');
-    // Construire le tableau des scores
-    let html = '<table class="scoreTable"><thead><tr><th>Joueur</th><th>Score</th></tr></thead><tbody>';
-    scores.forEach((s) => {
-      html += `<tr><td>${escapeHtml(s.name)}${s.online ? '' : ' <span class="muted">(hors-ligne)</span>'}</td><td>${s.score}</td></tr>`;
-    });
-    html += '</tbody></table>';
-    scoreTableEl.innerHTML = html;
-    // Cacher la zone de vote en fin de partie
-    voteAreaEl.classList.add('hidden');
-    voteAreaEl.innerHTML = '';
-    // Cacher également les lettres punies
-    punishedEl.classList.add('hidden');
-    punishedLettersEl.textContent = '';
-    // Afficher les boutons Menu/Replay uniquement pour l'host. Les joueurs ordinaires
-    // voient le score mais ne peuvent pas relancer ni retourner au menu.
-    btnMenu.classList.toggle('hidden', !isHost);
-    btnReplay.classList.toggle('hidden', !isHost);
-    // Arrêter la barre de vote en fin de partie
-    stopVoteTimer();
+  // Game end: display scoreboard overlay. On attend la fin d'un éventuel
+  // pop‑up d’élimination avant d'afficher le tableau, afin que les joueurs
+  // aient le temps de lire les raisons d’élimination.
+  socket.on('game:end', (data) => {
+    const showGameEnd = () => {
+      const { winner, round, scores } = data;
+      endOverlay.classList.remove('hidden');
+      // Construire le tableau des scores
+      let html = '<table class="scoreTable"><thead><tr><th>Joueur</th><th>Score</th></tr></thead><tbody>';
+      scores.forEach((s) => {
+        html += `<tr><td>${escapeHtml(s.name)}${s.online ? '' : ' <span class="muted">(hors-ligne)</span>'}</td><td>${s.score}</td></tr>`;
+      });
+      html += '</tbody></table>';
+      scoreTableEl.innerHTML = html;
+      // Cacher la zone de vote en fin de partie
+      voteAreaEl.classList.add('hidden');
+      voteAreaEl.innerHTML = '';
+      // Cacher également les lettres punies
+      punishedEl.classList.add('hidden');
+      punishedLettersEl.textContent = '';
+      // Cacher la zone d’élimination en fin de partie
+      if (elimPopup) {
+        elimPopup.classList.add('hidden');
+        elimPopup.innerHTML = '';
+      }
+      // Afficher les boutons Menu/Replay uniquement pour l'host
+      btnMenu.classList.toggle('hidden', !isHost);
+      btnReplay.classList.toggle('hidden', !isHost);
+      // Arrêter la barre de vote en fin de partie
+      stopVoteTimer();
+    };
+    // S'il y a un pop‑up d’élimination en cours, attendre qu'il disparaisse
+    // avant d'afficher le tableau des scores. La durée (2000 ms) doit
+    // correspondre à celle définie pour l'auto‑masquage du pop‑up.
+    if (elimPopupActive) {
+      setTimeout(showGameEnd, 2000);
+    } else {
+      showGameEnd();
+    }
   });
   // Host sends players back to menu: hide overlay and turn area
   socket.on('game:menu', () => {
@@ -283,6 +335,11 @@
     // Masquer les lettres punies
     punishedEl.classList.add('hidden');
     punishedLettersEl.textContent = '';
+    // Masquer la zone d’élimination
+    if (elimPopup) {
+      elimPopup.classList.add('hidden');
+      elimPopup.innerHTML = '';
+    }
     // Arrêter la barre de vote au retour au menu
     stopVoteTimer();
   });
@@ -376,6 +433,60 @@
     themeEl.textContent = '-';
     turnEl.textContent = '0';
     logEl.innerHTML = '';
+    // Réinitialiser la zone d’élimination
+    if (elimPopup) {
+      elimPopup.classList.add('hidden');
+      elimPopup.innerHTML = '';
+    }
+  });
+
+  /**
+   * Réception d’un pop‑up d’élimination. Le serveur envoie soit une liste
+   * d’« eliminations » (cas des joueurs n’ayant pas soumis ou ayant
+   * doublonné), soit une liste d’« events » (cas des votes hors‑sujet).
+   * On construit une liste de lignes affichant pour chaque joueur son
+   * nom et la raison de son élimination. Cette zone est distincte du
+   * journal des logs afin d’être bien visible. Elle s’efface après un
+   * court délai pour permettre la poursuite du jeu.
+   */
+  socket.on('elim:popup', (data) => {
+    if (!elimPopup) return;
+    let html = '';
+    // Cas des éliminations simples
+    if (data && Array.isArray(data.eliminations)) {
+      html = data.eliminations.map((item) => {
+        let reasonText = '';
+        if (item.reason === 'noSubmission') {
+          reasonText = "n'a pas écrit de mot à temps";
+        } else if (item.reason === 'duplicate') {
+          reasonText = 'a fait Chips';
+        } else {
+          // Par défaut, considérer que c'est un mot hors‑sujet
+          reasonText = 'mot hors‑sujet';
+        }
+        return `<div class="elim-row"><strong>${escapeHtml(item.name)}</strong> — ${escapeHtml(reasonText)}</div>`;
+      }).join('');
+    } else if (data && Array.isArray(data.events)) {
+      // Cas des éliminations par vote : chaque event contient une liste de players
+      html = data.events.map((ev) => {
+        return ev.players.map((pl) => {
+          const reasonText = 'mot hors‑sujet';
+          return `<div class="elim-row"><strong>${escapeHtml(pl.name)}</strong> — ${escapeHtml(reasonText)}</div>`;
+        }).join('');
+      }).join('');
+    }
+    if (html) {
+      elimPopup.innerHTML = html;
+      elimPopup.classList.remove('hidden');
+      // Marquer le pop‑up comme actif. Il sera désactivé après un court délai.
+      elimPopupActive = true;
+      // Auto‑masquage après un délai (synchronisé avec DELAY_CONFIG.eliminationPopupMs)
+      setTimeout(() => {
+        elimPopup.classList.add('hidden');
+        elimPopup.innerHTML = '';
+        elimPopupActive = false;
+      }, 2000);
+    }
   });
 
   /**

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Chips! By Kiddy</title>
+  <title>Unique Word Game</title>
   <link rel="stylesheet" href="style.css" />
   <script src="/socket.io/socket.io.js"></script>
 </head>
@@ -17,7 +17,7 @@
   -->
   <div id="join" class="overlay">
     <div class="join-card">
-      <h1>Chips!</h1>
+      <h1>Chips</h1>
       <p>Entrez votre nom et, si besoin, un code de partie.</p>
       <input type="text" id="name" placeholder="Votre nom" />
       <input type="text" id="roomCode" placeholder="Code de la room (facultatif)" />
@@ -85,6 +85,8 @@
           <div id="voteArea" class="vote-area hidden"></div>
           <!-- Section des lettres bannies. L’ID "punished" est conservé
                pour le JS. -->
+			   <!-- Zone d’élimination : affiche les joueurs éliminés et la raison -->
+			<div id="elimPopup" class="elim-popup hidden"></div>
           <div id="punished" class="banned-section">
             <h3>Lettres Bannies :</h3>
             <div id="punishedLetters"></div>

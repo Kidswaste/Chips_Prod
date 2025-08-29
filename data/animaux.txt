@@ -1,0 +1,9 @@
+chat
+chien
+cheval
+lion
+tigre
+vache
+mouton
+cochon
+lapin
